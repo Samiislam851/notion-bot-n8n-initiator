@@ -1,0 +1,19 @@
+{
+  "name": "kevin-build-cost-intake",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Assessment Part 3 - n8n + Notion construction cost intake automation",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/unit/*.test.mjs",
+    "setup:notion": "node --env-file=.env scripts/notion-setup.mjs",
+    "build": "node scripts/build-workflow.mjs",
+    "deploy": "node --env-file=.env scripts/deploy-workflow.mjs",
+    "scenarios": "node --env-file=.env scripts/run-scenarios.mjs",
+    "reset:demo": "node --env-file=.env scripts/reset-demo.mjs",
+    "verify": "node --env-file=.env scripts/verify-notion.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
