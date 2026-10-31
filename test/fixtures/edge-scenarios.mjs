@@ -2,7 +2,9 @@
 //
 // Runs IN ORDER after `npm run reset:demo` (+ optionally the base suite). Chains inside this
 // suite (create -> resubmit) are intentional; nothing here depends on base-suite records.
-// Every document ref used here is unique to this file.
+// Every document ref used here is unique to this file. Chains: e02->e09/e22, e05->e06, e10->e29,
+// e13->e15->e16, e17->e18->e19, e20->e21, e24->e25, e26->e30. Removed by review: e14 (see
+// test/output/edge-case-review.md); ids are never reused.
 //
 // `expect` states the CORRECT behaviour per the requirements and README / N8N-WORKFLOW.md.
 // Where the current rules are believed to deviate, the scenario carries `knownRisk`.
@@ -158,15 +160,15 @@ export const scenarios = [
     id: 'e09',
     title: 'PM replies "Re: [DEMO] ..." to a notification - must not alter the cost',
     category: 'email structure / duplicates',
-    rationale: 'Replies to notifications land in the same inbox. At most it is a duplicate of AT-INV-55120 (e02); it must not change the record or notify anyone. (Skipping it entirely would also be acceptable, but then the result line would be missing.)',
-    knownRisk: 'Only subjects starting with "[DEMO]" are skipped. The quoted text yields AT-INV-55120 + Apex (named in text) + USD 3,980 but no document date -> the email date (2026-10-31) is used -> UPDATE that moves Document date and notifies.',
+    rationale: 'Replies to notifications land in the same inbox. They are conversation, not cost documents: the workflow skips them entirely (no result line), so the record cannot change and nobody is notified. (Orchestrator decision after the first run: replies/forwards of notifications are skipped like the notification itself.)',
+    fixed: 'Run 1 failed: only subjects starting with "[DEMO]" were skipped and the email date overwrote the document date. Fixed in normalize.js (Re:/Fwd: + production subjects) and decide.cjs (fallback date never overwrites).',
     email: {
       from: 'mike@kevinbuild.co', fromName: 'Mike Johnson',
       subject: 'Re: [DEMO] Cost recorded: Apex Timber & Frames | AT-INV-55120 | USD 3,980.00 | Oak Street Residence',
       date: '2026-10-31T13:10:00Z',
       text: 'Checked with site, frames are in. All good.\n\nMike\n\n> Cost recorded\n> Supplier Apex Timber & Frames\n> Document Invoice AT-INV-55120\n> Amount USD 3,980.00',
     },
-    expect: { action: 'duplicate', docRef: 'AT-INV-55120', amount: 3980, docDate: '2026-10-22', notify: false },
+    expect: { resultsCount: 0 },
   },
 
   // ---------------------------------------------------------------- extraction
@@ -174,7 +176,7 @@ export const scenarios = [
     id: 'e10',
     title: 'UK supplier: GBP (£), DMY dates with day > 12, VAT lines, not in Contacts',
     category: 'extraction',
-    rationale: '23/10/2026 is unambiguous DMY even with dateOrder MDY. "Net:" and "VAT" lines must not be taken as amount/terms. GBP gets its own summary row and is flagged.',
+    rationale: '23/10/2026 is unambiguous DMY even with dateOrder MDY. "Net:" and "VAT" lines must not be taken as amount/terms. GBP gets its own summary row (asserted exactly: the supplier is new, so nothing else lands in it) and is flagged. Base for e29.',
     email: {
       from: 'accounts@brightlinejoinery.co.uk', fromName: 'Brightline Joinery Accounts',
       subject: 'Invoice BJ-1187 - Lakeside Cafe LKC-001 counters', date: '2026-10-23T11:00:00Z',
@@ -187,14 +189,16 @@ export const scenarios = [
     expect: {
       action: 'create', docRef: 'BJ-1187', amount: 2340, currency: 'GBP', docDate: '2026-10-23', dueDate: '2026-11-22',
       project: 'Lakeside Café Fit-out', needsReview: true, reviewIncludes: ['Currency is GBP', 'is not in Contacts'],
+      // New supplier -> this summary row holds only this cost (deterministic after reset:demo).
+      summaries: [{ key: 'brightline joinery accounts|2026-10|GBP', paid: 0, unpaid: 2340, count: 1 }],
     },
   },
   {
     id: 'e11',
     title: 'Italian supplier: European number format "EUR 1.234,64", dates 21.10.2026',
-    category: 'extraction (documented limitation)',
-    rationale: 'README §9: European amounts are not parsed and such items are "flagged, never silently wrong". Correct outcome: amount left empty + "Amount not found" (EUR flag alone is not enough, since the number would still be wrong).',
-    knownRisk: 'AMOUNT_PATTERN matches "EUR 1.23" (dot treated as decimal) -> amount 1.23 stored silently, no amount flag.',
+    category: 'extraction',
+    rationale: 'European suppliers write 1.234,64. It must never be stored silently wrong. Orchestrator decision after run 1: parse the unambiguous European formats (d.ddd,dd and d,dd) correctly instead of flagging them; the EUR flag still sends it to review.',
+    fixed: 'Run 1 stored 1.23. Fixed in extract.cjs (NUMBER_PATTERN / parseAmount).',
     email: {
       from: 'orders@ferramentarossi.example.it', fromName: 'Ferramenta Rossi',
       subject: 'Fattura FR-2026-0981 - LKC-001', date: '2026-10-21T16:45:00Z',
@@ -205,8 +209,8 @@ export const scenarios = [
       lines: ['#FERRAMENTA ROSSI S.R.L.', 'P.IVA IT 01234567890', '#FATTURA / INVOICE', 'Numero fattura / Invoice No: FR-2026-0981', 'Data / Date: 21.10.2026', 'Descrizione / Description: Stainless shelving brackets', 'Imponibile / Subtotal: EUR 1.012,00', 'IVA 22%: EUR 222,64', 'Totale / Total: EUR 1.234,64', 'Scadenza / Due: 20.11.2026'],
     },
     expect: {
-      action: 'create', docRef: 'FR-2026-0981', amount: null, currency: 'EUR', docDate: '2026-10-21', dueDate: '2026-11-20',
-      project: 'Lakeside Café Fit-out', needsReview: true, reviewIncludes: ['Amount not found', 'Currency is EUR'],
+      action: 'create', docRef: 'FR-2026-0981', amount: 1234.64, currency: 'EUR', docDate: '2026-10-21', dueDate: '2026-11-20',
+      project: 'Lakeside Café Fit-out', needsReview: true, reviewIncludes: ['Currency is EUR'], reviewExcludes: ['Amount not found'],
     },
   },
   {
@@ -229,7 +233,7 @@ export const scenarios = [
     id: 'e13',
     title: 'ISO dates, "US$" amounts, Subtotal / Tax / Grand Total lines (clean create)',
     category: 'extraction / notifications',
-    rationale: 'Grand Total (10,010) must win over Subtotal, Tax and line items; US$ is USD (no currency flag). A clean create notifies the PM. Base for the e14-e16 chain.',
+    rationale: 'Grand Total (10,010) must win over Subtotal, Tax and line items; US$ is USD (no currency flag). A clean create notifies the PM. Base for the e15-e16 chain.',
     email: { ...SPARKS, subject: 'Invoice SE-INV-3150 - SKY-001 L3 lighting', date: '2026-10-19T09:00:00Z', text: 'Invoice attached.' },
     pdf: { fileName: 'Sparks-SE-INV-3150.pdf', lines: SE_3150_LINES('2026-12-03', 'SKY-001 Skyline Development') },
     expect: {
@@ -240,16 +244,6 @@ export const scenarios = [
 
   // ---------------------------------------------------------------- duplicates / updates
   {
-    id: 'e14',
-    title: 'Exact same email delivered twice (same Message-ID)',
-    category: 'duplicates / notifications',
-    rationale: 'IMAP re-read or webhook retry: the same Message-ID must never create a second cost or a second email.',
-    sameAs: 'e13',
-    messageId: '<demo-e13@cost-intake.test>',
-    email: { date: '2026-10-19T09:00:00Z' },
-    expect: { action: 'duplicate', docRef: 'SE-INV-3150', amount: 10010, submissions: 2, notify: false },
-  },
-  {
     id: 'e15',
     title: 'Resubmission that only extends the due date',
     category: 'duplicates / updates',
@@ -257,7 +251,7 @@ export const scenarios = [
     email: { ...SPARKS, subject: 'Invoice SE-INV-3150 - revised payment terms', date: '2026-10-28T10:00:00Z', text: 'As agreed, revised due date. Invoice attached.' },
     pdf: { fileName: 'Sparks-SE-INV-3150-rev.pdf', lines: SE_3150_LINES('2026-12-31', 'SKY-001 Skyline Development') },
     expect: {
-      action: 'update', amount: 10010, dueDate: '2026-12-31', submissions: 3, needsReview: false,
+      action: 'update', amount: 10010, dueDate: '2026-12-31', submissions: 2, needsReview: false,
       changesIncludes: 'Payment due', reviewExcludes: 'Amount changed', notify: true,
     },
   },
@@ -286,14 +280,14 @@ export const scenarios = [
     id: 'e18',
     title: 'Same invoice later paid in full (Balance Due $0.00 + PAID)',
     category: 'duplicates / updates',
-    rationale: 'Partially Paid -> Paid on the same record; amount stays 6,000 (Balance Due 0 must not become the amount, and must not raise "Amount changed").',
+    rationale: 'Partially Paid -> Paid on the same record; amount stays 6,000 (Balance Due 0 must not become the amount, and must not raise "Amount changed"). The PAID copy has no due date: an empty value must not erase the recorded 2026-12-16.',
     email: { ...BUILDMART, subject: 'INV-BM-6240 - paid in full, thank you', date: '2026-10-31T09:00:00Z', text: 'Final payment received, paid copy attached.' },
     pdf: {
       fileName: 'BuildMart-INV-BM-6240-PAID.pdf',
       lines: ['#BUILDMART SUPPLIES', '#TAX INVOICE', 'Invoice Number: INV-BM-6240', 'Invoice Date: 10/16/2026', 'Site: 4 Harbour Rd', 'Description: Timber decking boards', 'Invoice Total: $6,000.00', 'Amount Paid: $6,000.00', 'Balance Due: $0.00', 'PAID'],
     },
     expect: {
-      action: 'update', status: 'Paid', amount: 6000, changesIncludes: 'Payment status: Partially Paid -> Paid', reviewExcludes: 'Amount changed',
+      action: 'update', status: 'Paid', amount: 6000, dueDate: '2026-12-16', changesIncludes: 'Payment status: Partially Paid -> Paid', reviewExcludes: 'Amount changed',
     },
   },
   {
@@ -324,7 +318,7 @@ export const scenarios = [
     pdf: LOWES_RECEIPT,
     expect: {
       action: 'create', supplier: "Lowe's", docRef: null, amount: 312.47, status: 'Paid', docDate: '2026-10-29', project: 'Maple Court Extension',
-      needsReview: true, reviewIncludes: ['Invoice/receipt number not found', 'is not in Contacts'], reviewExcludes: 'is marked Completed',
+      needsReview: true, reviewIncludes: ['Invoice/receipt number not found', 'is not in Contacts'],
     },
   },
   {
@@ -350,21 +344,21 @@ export const scenarios = [
       fileName: 'Apex-CN-2290.pdf',
       lines: ['#APEX TIMBER & FRAMES', '#CREDIT NOTE', 'Credit Note No: CN-2290', 'Date: 10/31/2026', 'Applies to Invoice: AT-INV-55120', 'Job: OAK-001', 'Description: Return of damaged lintels', 'Total Credit: -$450.00'],
     },
-    expect: { action: 'create', docRef: 'CN-2290', project: 'Oak Street Residence', needsReview: true, reviewIncludes: 'Zero or negative amount' },
+    expect: { action: 'create', docRef: 'CN-2290', amount: -450, project: 'Oak Street Residence', needsReview: true, reviewIncludes: 'Zero or negative amount' },
   },
   {
     id: 'e23',
     title: 'Zero-dollar warranty call-out invoice on a Warranty-stage project',
     category: 'extraction',
-    rationale: '$0.00 is a real amount (not "missing"): store 0 and flag "Zero or negative amount", not "Amount not found". Warranty is not Completed, so no Completed flag. Site address "17 Maple Court" (Court = Ct).',
+    rationale: '$0.00 is a real amount (not "missing"): store 0 and flag "Zero or negative amount", not "Amount not found". No due date / terms / paid marker -> status Unknown + "Payment status unclear" (the only live check of that rule). Warranty is not Completed, so no Completed flag. Site address "17 Maple Court" (Court = Ct).',
     email: { ...SPARKS, subject: 'Invoice SE-INV-3188 - warranty callout', date: '2026-10-28T16:00:00Z', text: 'No charge - covered under warranty.' },
     pdf: {
       fileName: 'Sparks-SE-INV-3188.pdf',
       lines: ['#SPARKS ELECTRICAL', '#TAX INVOICE', 'Invoice No: SE-INV-3188', 'Invoice Date: 10/28/2026', 'Site: 17 Maple Court', 'Description: Warranty callout - replace faulty RCD (no charge)', 'Labour: $0.00', 'Parts: $0.00', 'Total: $0.00'],
     },
     expect: {
-      action: 'create', docRef: 'SE-INV-3188', amount: 0, project: 'Maple Court Extension', needsReview: true,
-      reviewIncludes: 'Zero or negative amount', reviewExcludes: ['Amount not found', 'is marked Completed'],
+      action: 'create', docRef: 'SE-INV-3188', amount: 0, status: 'Unknown', project: 'Maple Court Extension', needsReview: true,
+      reviewIncludes: ['Zero or negative amount', 'Payment status unclear'], reviewExcludes: ['Amount not found', 'is marked Completed'],
     },
   },
   {
@@ -443,5 +437,103 @@ export const scenarios = [
       { action: 'create', supplier: 'Sparks Electrical', docRef: '10057', amount: 3100, project: 'Riverside Home', submissions: 1 },
       { action: 'create', supplier: 'ReadyMix Concrete', docRef: '10057', amount: 1480, project: 'Riverside Home', submissions: 1 },
     ],
+  },
+
+  // ---------------------------------------------------------------- added by review (gaps)
+  {
+    id: 'e29',
+    title: 'BJ-1187 re-issued in USD after a deposit (currency change + Partially Paid)',
+    category: 'duplicates / updates / summary',
+    rationale: 'Only live check of "Currency changed on resubmission" (flag + apply), of a cost moving between CURRENCY summary rows (both rows recalculated: USD gets it, GBP drops to 0), and of "Partially Paid counts as unpaid in full" in the summary totals. Both rows belong to a new supplier, so the totals are deterministic after reset:demo. Depends on e10.',
+    email: {
+      from: 'accounts@brightlinejoinery.co.uk', fromName: 'Brightline Joinery Accounts',
+      subject: 'Re-issued invoice BJ-1187 in USD - Lakeside Cafe LKC-001', date: '2026-10-29T11:00:00Z',
+      text: 'As agreed with Kevin, the invoice is re-issued in USD. Deposit received with thanks, balance shown on the attached.\n\nBrightline Joinery Ltd',
+    },
+    pdf: {
+      fileName: 'Brightline-BJ-1187-USD.pdf',
+      lines: ['#BRIGHTLINE JOINERY LTD', '#INVOICE (RE-ISSUED IN USD)', 'Invoice No: BJ-1187', 'Invoice Date: 23/10/2026', 'Description: Bespoke oak bar counters', 'Invoice Total: US$ 2,340.00', 'Amount Paid: US$ 1,000.00', 'Balance Due: US$ 1,340.00', 'Payment due: 22/11/2026'],
+    },
+    expect: {
+      action: 'update', docRef: 'BJ-1187', amount: 2340, currency: 'USD', status: 'Partially Paid', submissions: 2, needsReview: true,
+      changesIncludes: ['Currency: GBP -> USD', 'Payment status: Unpaid -> Partially Paid'],
+      reviewIncludes: 'Currency changed on resubmission: GBP -> USD', reviewExcludes: ['Currency is GBP', 'Amount changed'],
+      summaries: [
+        { key: 'brightline joinery accounts|2026-10|USD', paid: 0, unpaid: 2340, count: 1 },
+        { key: 'brightline joinery accounts|2026-10|GBP', paid: 0, unpaid: 0, count: 0 },
+      ],
+    },
+  },
+  {
+    id: 'e30',
+    title: 'INV-BM-6300 re-sent with a single project code - project linked on the existing record',
+    category: 'duplicates / updates / matching',
+    rationale: 'Only check of the "Project linked" update path (record had no project because e26 was ambiguous). Same amount, nothing else changes; no new review reasons, but Needs Review stays ticked until a person clears it (N8N-WORKFLOW I2). Depends on e26.',
+    email: { ...BUILDMART, subject: 'INV-BM-6300 - correction: whole delivery to SKY-001', date: '2026-10-26T10:00:00Z', text: 'Correction - the whole block delivery went to one site. Updated invoice attached.' },
+    pdf: {
+      fileName: 'BuildMart-INV-BM-6300-corrected.pdf',
+      lines: ['#BUILDMART SUPPLIES', '#INVOICE', 'Invoice Number: INV-BM-6300', 'Date: 10/23/2026', 'Deliver to: SKY-001', 'Description: Concrete blocks', 'Total: $2,600.00', 'Due Date: 12/22/2026'],
+    },
+    expect: {
+      action: 'update', docRef: 'INV-BM-6300', amount: 2600, project: 'Skyline Development', submissions: 2, needsReview: true,
+      changesIncludes: 'Project linked: Skyline Development', reviewExcludes: ['Several projects matched', 'different project'], notify: true,
+    },
+  },
+  {
+    id: 'e31',
+    title: 'Paid invoice whose due date has passed; project named only as "Lakeside Cafe Fit-out" (no accent, no code)',
+    category: 'extraction / matching / review',
+    rationale: 'The overdue rule must apply only to unpaid costs: Paid + past due = clean (no flag). Also the only test of the PROJECT NAME match tier (all other cases hit code, PO, address or keyword first), with accent folding "Cafe" = "Café". September document -> its own summary month.',
+    email: { ...APEX, subject: 'Paid invoice AT-INV-55311 for your records', date: '2026-10-20T09:00:00Z', text: 'Paid copy for your records. Thanks for your business.' },
+    pdf: {
+      fileName: 'Apex-AT-INV-55311-PAID.pdf',
+      lines: ['#APEX TIMBER & FRAMES', '#TAX INVOICE', 'Invoice No: AT-INV-55311', 'Invoice Date: 09/15/2026', 'Job: Lakeside Cafe Fit-out', 'Description: Timber bench seating', 'Total: $1,320.00', 'Due Date: 10/15/2026', 'PAID IN FULL - thank you'],
+    },
+    expect: {
+      action: 'create', docRef: 'AT-INV-55311', amount: 1320, status: 'Paid', docDate: '2026-09-15', dueDate: '2026-10-15',
+      project: 'Lakeside Café Fit-out', needsReview: false, reviewExcludes: 'overdue', notify: true,
+    },
+  },
+  {
+    id: 'e32',
+    title: 'Valid but text-less PDF (scanned image), invoice details typed in the body',
+    category: 'email structure / file handling',
+    rationale: 'Only check of "PDF has no readable text" on a real, small PDF (e07 reaches that rule only through the too-large/junk path). Fields must come from the body, the PDF must still be uploaded (no "could not be uploaded" flag).',
+    email: {
+      ...READYMIX, subject: 'RM-INV-3521 (scanned copy) - MPL-001', date: '2026-10-24T08:00:00Z',
+      text: 'Our scanner only produces images, details below.\nInvoice No: RM-INV-3521\nInvoice Date: 10/24/2026\nDescription: Footpath repair pour\nAmount Due: $3,315.00\nDue Date: 11/23/2026',
+    },
+    pdf: { fileName: 'ReadyMix-RM-INV-3521-scan.pdf', lines: [] },
+    expect: {
+      action: 'create', file: 'ReadyMix-RM-INV-3521-scan.pdf', docRef: 'RM-INV-3521', amount: 3315, docDate: '2026-10-24', dueDate: '2026-11-23',
+      project: 'Maple Court Extension', needsReview: true, reviewIncludes: 'PDF has no readable text', reviewExcludes: ['could not be uploaded', 'larger than'],
+    },
+  },
+  {
+    id: 'e33',
+    title: 'iPhone photo named "image0.png" (21 KB) with the amount in the body and no date',
+    category: 'email structure / file handling / extraction',
+    rationale: 'iPhone Mail names photos image0.jpeg/png - the same pattern as signature logos (e02). A real-sized photo must NOT be dropped by the logo filter (< 8 KB only). Amount comes from the body; with no date anywhere the email date is used and flagged (only live check of that rule).',
+    email: {
+      from: 'mike@kevinbuild.co', fromName: 'Mike Johnson', subject: 'Fuel and ice - OAK-001', date: '2026-10-30T15:00:00Z',
+      text: 'Fuel and ice at Wawa for the Oak St crew, $86.40 paid on the company card. Photo attached.\n\nMike',
+    },
+    attachments: [{ fileName: 'image0.png', png: true, width: 1200, height: 1600 }],
+    expect: {
+      resultsCount: 1, action: 'create', file: 'image0.png', amount: 86.4, status: 'Paid', docDate: '2026-10-30', project: 'Oak Street Residence',
+      needsReview: true, reviewIncludes: ['Photo/scanned receipt', 'used email received date'],
+    },
+  },
+  {
+    id: 'e34',
+    title: 'Body-only invoice without a date, emailed 10:30 pm New York time on 31 Oct (= 1 Nov UTC)',
+    category: 'extraction / summary',
+    rationale: 'The fallback document date decides the summary MONTH. "Today" is computed in America/New_York (Settings.timezone), so the received date should be too: 2026-10-31, October row - not November.',
+    knownRisk: 'prepareSubmission uses new Date(email.date).toISOString().slice(0, 10), i.e. the UTC date -> docDate 2026-11-01 and the cost lands in the Nov-2026 summary row.',
+    email: {
+      ...SPARKS, subject: 'Invoice SE-INV-3222 - MPL-001 after-hours callout', date: '2026-11-01T02:30:00Z',
+      text: 'Invoice No: SE-INV-3222\nDescription: After-hours callout - pump circuit\nAmount Due: $640.00\nDue Date: 11/30/2026\n\nSparks Electrical',
+    },
+    expect: { action: 'create', docRef: 'SE-INV-3222', amount: 640, docDate: '2026-10-31', project: 'Maple Court Extension', needsReview: true, reviewIncludes: 'used email received date' },
   },
 ];

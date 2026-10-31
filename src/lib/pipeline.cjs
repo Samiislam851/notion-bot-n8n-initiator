@@ -31,6 +31,8 @@ function prepareSubmission(sub, ref, cfg) {
   );
   const pm = matchProject({ subject: email.subject, body: email.text, documentText, poNumber: f.poNumber }, ref.projects, ref.orders);
   const receivedAt = email.date ? new Date(email.date).toISOString() : new Date().toISOString();
+  // Fallback document date = the day the email arrived in the company's timezone (not UTC).
+  const receivedDay = new Intl.DateTimeFormat('en-CA', { timeZone: cfg.timezone || 'America/New_York' }).format(new Date(receivedAt));
 
   return {
     // extracted fields
@@ -42,7 +44,7 @@ function prepareSubmission(sub, ref, cfg) {
     currency: f.currency,
     currencyMethod: f.currencyMethod,
     status: f.status,
-    docDate: f.docDate || receivedAt.slice(0, 10),
+    docDate: f.docDate || receivedDay,
     docDateSource: f.docDate ? 'document' : 'email',
     dueDate: f.dueDate,
     dueSource: f.dueSource,

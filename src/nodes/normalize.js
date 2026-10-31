@@ -41,7 +41,8 @@ for (const item of emails) {
     date: e.date || new Date().toISOString(),
     messageId: e.messageId || e['message-id'] || null,
   };
-  if (/^\[DEMO\]/.test(email.subject)) continue; // never re-process our own notifications
+  // Never process our own notifications or replies/forwards of them (demo or production subjects).
+  if (/^((re|fw|fwd|aw|tr)\s*:\s*)*(\[DEMO\]|(needs review - )?cost (recorded|updated):)/i.test(email.subject)) continue;
 
   const attachments = [];
   if (fromWebhook) {
@@ -67,4 +68,5 @@ for (const item of emails) {
     binary: { document: a.binary },
   }));
 }
-return out;
+// Nothing to process (e.g. only our own notifications): still finish the run cleanly.
+return out.length ? out : [{ json: { skipped: true, reason: 'no documents to process' } }];

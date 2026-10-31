@@ -28,12 +28,10 @@ export async function syncAllSummaries(ids, { log = console.log } = {}) {
     if (row) { await notion('PATCH', `/pages/${row.id}`, { properties: props }); updated++; byKey.delete(key); }
     else { await notion('POST', '/pages', { parent: { database_id: ids.summary }, properties: props }); created++; }
   }
-  // Rows whose costs no longer exist (e.g. after a demo reset) are set to zero, not deleted.
+  // Rows whose costs no longer exist (e.g. after a demo reset) are archived (moved to Notion's trash).
   for (const [, row] of byKey) {
-    await notion('PATCH', `/pages/${row.id}`, {
-      properties: { 'Total Paid': { number: 0 }, 'Total Unpaid': { number: 0 }, 'Cost Count': { number: 0 }, 'Last Recalculated': { date: { start: now } } },
-    });
+    await notion('PATCH', `/pages/${row.id}`, { archived: true });
     zeroed++;
   }
-  log(`  summaries: ${created} created, ${updated} updated, ${zeroed} zeroed`);
+  log(`  summaries: ${created} created, ${updated} updated, ${zeroed} archived (no costs left)`);
 }

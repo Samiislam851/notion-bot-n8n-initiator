@@ -48,7 +48,7 @@ For setup and the overall project, see [README.md](README.md).
 ```
 TRIGGERS          Email Trigger (IMAP) | Test Intake Webhook
 SETUP             Settings → Get Projects → Get Suppliers → Get Employees → Get Purchase Orders
-SPLIT             Normalize & Split Attachments  (1 item per document)
+SPLIT             Normalize & Split Attachments  (1 item per document) → Any Documents?
 LOOP (1 at a time)
   READ            Current Document → Has PDF? → Extract PDF Text → Parse & Match → AI Extraction Slot
   DECIDE          Find Existing Cost → Decide Action
@@ -63,11 +63,11 @@ FINISH            Build Run Report → Respond to Webhook
 
 | Count | |
 |---|---|
-| Functional nodes | **35** |
+| Functional nodes | **36** |
 | Sticky notes (documentation on the canvas) | 8 |
 | Code nodes | 15 |
 | HTTP Request nodes (all Notion API) | 12 |
-| IF nodes | 3 |
+| IF nodes | 4 |
 | Other | IMAP trigger, Webhook, Split in Batches, Extract From File, No-op, Send Email, Respond to Webhook |
 
 ---
@@ -144,8 +144,9 @@ flowchart TD
     A1[Email Trigger IMAP] --> S[Settings]
     A2[Test Intake Webhook] --> S
     S --> R1[Get Projects] --> R2[Get Suppliers] --> R3[Get Employees] --> R4[Get Purchase Orders]
-    R4 --> NS[Normalize & Split Attachments]
-    NS --> L{{Loop Over Documents}}
+    R4 --> NS[Normalize & Split Attachments] --> AD{Any Documents?}
+    AD -- false --> RP
+    AD -- true --> L{{Loop Over Documents}}
     L -- loop --> CD[Current Document] --> HP{Has PDF?}
     HP -- true --> EX[Extract PDF Text] --> PM
     HP -- false --> PM[Parse & Match]
@@ -216,7 +217,7 @@ Turns *emails* into *documents*.
    `{ from, fromName, subject, text, date, messageId }`.
    - "from" is read whether it's an IMAP address object or a `"Name <x@y>"` string.
    - HTML-only emails are converted to text.
-3. **Skips** emails whose subject starts with `[DEMO]`, so the workflow never processes its own notifications.
+3. **Skips** the workflow's own notifications and any **replies or forwards** of them. Subjects like `[DEMO] …`, `Re: [DEMO] …`, `Fwd: Cost recorded: …` and `Needs review - Cost updated: …` are skipped. If nothing is left, it outputs a single `{ skipped: true }` item, and **Any Documents?** sends that straight to the run report, so the webhook still answers `{ processed: 0, results: [] }`.
 4. Collects the attachments:
    - **Webhook:** base64 is converted to binary with `this.helpers.prepareBinaryData(...)`.
    - **IMAP:** the binaries are already attached; file sizes are read from the metadata.
@@ -590,7 +591,7 @@ The same helpers are unit-tested (`npm test`), so the code in n8n is exactly the
 | Re-runs or retries inflating totals | Summary is **recomputed**, never incremented |
 | Notion search lag right after a write | Totals use the page returned by the write, not the search result |
 | Two documents for the same supplier/month in one email | Loop processes them one by one |
-| Workflow emailing itself in a loop | `[DEMO]` subjects are skipped; IMAP only reads mail sent to `+costs` |
+| Workflow emailing itself in a loop | Notifications and replies/forwards of them are skipped; IMAP only reads mail sent to `+costs` |
 | Wrong project guessed | Ambiguous matches are never guessed; the cost is flagged |
 
 What is **not** protected (see README §9): two *separate executions* at the same instant for the same supplier/month, and IMAP marking an email as read before a failed run.
@@ -686,7 +687,9 @@ Result: **one** record for INV-78102 in Notion, with all three emails in its Upd
 | Get Suppliers | main | Get Employees |
 | Get Employees | main | Get Purchase Orders |
 | Get Purchase Orders | main | Normalize & Split Attachments |
-| Normalize & Split Attachments | main | Loop Over Documents |
+| Normalize & Split Attachments | main | Any Documents? |
+| Any Documents? | true | Loop Over Documents |
+| Any Documents? | false | Build Run Report |
 | Loop Over Documents | **done** (0) | Build Run Report |
 | Loop Over Documents | **loop** (1) | Current Document |
 | Current Document | main | Has PDF? |

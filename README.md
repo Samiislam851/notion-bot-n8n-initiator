@@ -197,8 +197,9 @@ flowchart TD
     A1[Email Trigger IMAP] --> S[Settings]
     A2[Test Intake Webhook] --> S
     S --> R1[Get Projects] --> R2[Get Suppliers] --> R3[Get Employees] --> R4[Get Purchase Orders]
-    R4 --> NS[Normalize & Split Attachments]
-    NS --> L{{Loop Over Documents<br/>1 at a time}}
+    R4 --> NS[Normalize & Split Attachments] --> AD{Any Documents?}
+    AD -- no --> RP
+    AD -- yes --> L{{Loop Over Documents<br/>1 at a time}}
     L -- each --> CD[Current Document] --> HP{Has PDF?}
     HP -- yes --> EX[Extract PDF Text] --> PM
     HP -- no --> PM[Parse & Match]
@@ -526,8 +527,8 @@ The response lists, for every document: the action taken, the extracted fields, 
 
 - **Rule-based extraction:** unusual layouts or wording can miss a field. When that happens the item is flagged for review, never silently wrong.
 - **No OCR:** photos and scanned PDFs are attached and flagged for manual entry.
-- **Formats:** US dates are assumed (configurable). European amounts such as `1.234,56` aren't parsed. Currencies aren't converted; each currency has its own summary row.
-- **Partially Paid** counts as unpaid in full (documents rarely state the paid portion). Credit notes are flagged, not stored as negative costs.
+- **Formats:** US dates are assumed for ambiguous dates like `03/04/2026` (configurable). European amounts (`1.234,56`, `222,64`) are read correctly, but an ambiguous `1.234` without decimals is read as 1.234. Currencies aren't converted; each currency has its own summary row.
+- **Partially Paid** counts as unpaid in full (documents rarely state the paid portion). **Credit notes** are recorded as their own **negative** cost (e.g. −450) and flagged; they are not linked automatically to the invoice they correct.
 - **Duplicates:** these rely on supplier + invoice number. If one supplier appears under two names, a duplicate can slip through. Without an invoice number, the key falls back to supplier + date + amount, and the cost is flagged.
 - **Concurrency:** two *separate* runs at the same moment for the same supplier and month could both create a summary row. `npm run verify` detects this and `reset:demo` / `setup:notion` repair it. A nightly full recalculation would remove the risk in production.
 - **Edits made by hand in Notion** don't trigger the workflow. The summary refreshes on the next submission for that supplier and month.

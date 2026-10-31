@@ -117,3 +117,20 @@ test('notification: demo banner names the real recipients; review goes to admin 
   assert.deepEqual(n2.intendedRecipients.map((p) => p.email), ['mike@kevinbuild.co']);
   assert.equal(L.buildNotification({ action: 'duplicate', record: {}, newReviewReasons: [] }, {}, cfg).send, false);
 });
+
+test('regression e04/e09: a fallback (email) date never overwrites a recorded document date', () => {
+  const page = asPage('pg1', L.decideAction(parse('s01'), null, cfg, TODAY).properties);
+  const again = { ...parse('s02'), docDate: '2026-10-29', docDateSource: 'email' };
+  const d = L.decideAction(again, page, cfg, TODAY);
+  assert.equal(d.action, 'duplicate');
+  assert.equal(d.record.docDate, '2026-10-28');
+});
+
+test('regression e30: a resolved review keeps the flag but no longer shows only the stale reason', () => {
+  const created = L.decideAction(parse('s05'), null, cfg, TODAY);
+  const page = asPage('pg5', created.properties);
+  const fixed = { ...parse('s05'), projectId: 'p-sky', projectName: 'Skyline Development', dueDate: '2026-12-31' };
+  const d = L.decideAction(fixed, page, cfg, TODAY);
+  assert.equal(d.record.needsReview, true); // a person unticks it
+  assert.match(d.record.reviewReason, /passes the automatic checks/);
+});

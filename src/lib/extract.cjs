@@ -16,7 +16,10 @@ const DATE_PATTERN =
   '|\\d{1,2}(?:st|nd|rd|th)?\\s+[A-Za-z]{3,9}\\.?,?\\s+\\d{4}' +
   '|[A-Za-z]{3,9}\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?,?\\s+\\d{4}';
 
-const AMOUNT_PATTERN = '(?:[A-Z]{3}\\s*)?(?:US\\$|AU\\$|A\\$|CA\\$|C\\$|NZ\\$|[$€£])?\\s*-?\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?(?:\\s*[A-Z]{3})?|(?:[A-Z]{3}\\s*)?(?:US\\$|AU\\$|A\\$|CA\\$|C\\$|NZ\\$|[$€£])?\\s*-?\\d+(?:\\.\\d{1,2})?(?:\\s*[A-Z]{3})?';
+// Number formats: European "1.234,56" / "222,64", US "1,234.56" / "245.10" / "4800".
+const CUR_SYMBOL = '(?:US\\$|AU\\$|A\\$|CA\\$|C\\$|NZ\\$|[$€£])';
+const NUMBER_PATTERN = '\\d{1,3}(?:\\.\\d{3})+,\\d{1,2}(?!\\d)|\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+,\\d{2}(?![\\d,])|\\d+(?:\\.\\d{1,2})?';
+const AMOUNT_PATTERN = '(?:[A-Z]{3}\\s*)?\\(?-?\\s*' + CUR_SYMBOL + '?\\s*-?(?:' + NUMBER_PATTERN + ')\\)?(?:\\s*[A-Z]{3})?';
 
 function cleanText(s) {
   return String(s || '')
@@ -81,10 +84,18 @@ function addDays(iso, days) {
 }
 
 function parseAmount(str) {
-  const m = String(str || '').match(/-?\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|-?\d+(?:\.\d{1,2})?/);
+  const s = String(str || '');
+  const m = s.match(new RegExp(NUMBER_PATTERN));
   if (!m) return null;
-  const n = Number(m[0].replace(/,/g, ''));
-  return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+  const european = /^\d{1,3}(?:\.\d{3})+,\d{1,2}$|^\d+,\d{2}$/.test(m[0]);
+  const n = Number(european ? m[0].replace(/\./g, '').replace(',', '.') : m[0].replace(/,/g, ''));
+  if (!Number.isFinite(n)) return null;
+  // "-$450.00", "$-450", "(450.00)" are negative (credit notes / refunds)
+  const before = s.slice(0, m.index);
+  const after = s.slice(m.index + m[0].length);
+  const negative = new RegExp('-\\s*' + CUR_SYMBOL + '?\\s*$').test(before) ||
+    (new RegExp('\\(\\s*' + CUR_SYMBOL + '?\\s*$').test(before) && /^\s*\)/.test(after));
+  return Math.round((negative ? -n : n) * 100) / 100;
 }
 
 // Detect a currency from a snippet such as "$8,450.00 USD", "€1.200", "AUD 300".
@@ -128,7 +139,8 @@ function looksLikeDate(token) {
 
 function extractDocRef(sources) {
   const labels = [
-    'tax invoice', 'invoice', 'inv', 'receipt', 'rcpt', 'bill', 'credit note', 'statement', 'document', 'reference', 'ref',
+    // 'credit note' first: a credit note usually also mentions the invoice it applies to
+    'credit\\s+note', 'tax invoice', 'invoice', 'inv', 'receipt', 'rcpt', 'bill', 'statement', 'document', 'reference', 'ref',
   ];
   const token = '[A-Z0-9][A-Z0-9\\-\\/_.]*\\d[A-Z0-9\\-\\/_]*';
   for (const src of sources) {
@@ -149,7 +161,7 @@ function extractDocRef(sources) {
 function extractPO(text) {
   const t = String(text || '');
   const m =
-    t.match(/\b(?:PO|P\.O\.|purchase\s+order)\b\s*(?:no\.?|number|#)?\s*[:#]?\s*((?:PO-)?[A-Z0-9]*\d[A-Z0-9\-]*)/i) ||
+    t.match(/(?:\bPO\b|\bP\.O\.|\bpurchase\s+order\b)\s*(?:no\.?|number|#)?\s*[:#]?\s*((?:PO-)?[A-Z0-9]*\d[A-Z0-9\-]*)/i) ||
     t.match(/\b(PO-?\d{3,})\b/i);
   if (!m) return null;
   const v = m[1].toUpperCase();
@@ -256,7 +268,7 @@ function extractDates(text, dateOrder) {
 }
 
 function extractLabeledSupplier(text) {
-  const hit = findLabeled(text, ['supplier', 'vendor', 'merchant', 'store', 'sold\\s+by', 'from'], '[A-Za-z0-9&][^\\n]{1,60}', { requireSep: true });
+  const hit = findLabeled(text, ['supplier', 'vendor', 'merchant', 'sold\\s+by', 'from'], '[A-Za-z0-9&][^\\n]{1,60}', { requireSep: true });
   return hit ? hit.value.replace(/\s{2,}.*/, '').trim() : null;
 }
 
@@ -286,6 +298,7 @@ function extractFields(input, cfg) {
     amounts.find((a) => a.kind === 'total' && a.amount > 0) ||
     amounts.find((a) => a.kind === 'due' && a.amount > 0) ||
     amounts.find((a) => a.kind === 'paid' && a.amount > 0) ||
+    amounts.find((a) => a.kind === 'total' && a.amount < 0) ||
     null;
   let amountMethod = chosen ? 'labelled' : null;
   if (!chosen) {
@@ -308,6 +321,8 @@ function extractFields(input, cfg) {
   const { docDate, dueDate, dueSource } = extractDates(primary, cfg.dateOrder);
   const status = extractStatus(all, amounts);
   const docType = extractDocType(doc || subject + '\n' + body);
+  // A credit note reduces what is owed even when printed without a minus sign.
+  if (docType === 'Credit note' && chosen && chosen.amount > 0) chosen = Object.assign({}, chosen, { amount: -chosen.amount });
 
   return {
     docRef,

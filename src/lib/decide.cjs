@@ -155,7 +155,8 @@ function decideAction(parsed, existingPage, cfg, today) {
     updateReasons.push('Currency changed on resubmission: ' + old.currency + ' -> ' + incoming.currency);
     setIf('currency', 'Currency');
   } else if (!old.currency) setIf('currency', 'Currency');
-  setIf('docDate', 'Document date');
+  // A date that only came from the email (fallback) must never overwrite a recorded one.
+  if (incoming.docDateSource === 'document') setIf('docDate', 'Document date');
   setIf('dueDate', 'Payment due');
 
   if (incoming.status && incoming.status !== 'Unknown' && incoming.status !== old.status) {
@@ -187,7 +188,11 @@ function decideAction(parsed, existingPage, cfg, today) {
   const ruleReasons = assessReview(merged, cfg, today);
   const reasons = [...new Set([...updateReasons, ...ruleReasons])];
   merged.needsReview = old.needsReview || reasons.length > 0;
-  merged.reviewReason = reasons.length ? reasons.join('; ') : old.reviewReason;
+  merged.reviewReason = reasons.length
+    ? reasons.join('; ')
+    : old.needsReview && old.reviewReason
+      ? appendLog(old.reviewReason, today + ': resubmission now passes the automatic checks - confirm and untick Needs Review')
+      : old.reviewReason;
   merged.updateLog = appendLog(
     old.updateLog,
     logLine(today, 'Resubmission "' + (incoming.subject || '') + '": ' + (changes.length ? changes.join('; ') : 'no field changes') +

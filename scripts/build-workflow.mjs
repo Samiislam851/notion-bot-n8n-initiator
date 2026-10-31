@@ -131,8 +131,10 @@ notionHttp('Get Employees', [-700, 280], { url: dbQueryUrl('employees'), jsonBod
 notionHttp('Get Purchase Orders', [-480, 280], { url: dbQueryUrl('orders'), jsonBody: '={{ JSON.stringify({ page_size: 100 }) }}', paginate: true, executeOnce: true });
 codeNode('Normalize & Split Attachments', [-260, 280], 'normalize.js', null);
 
+boolIf('Any Documents?', [-150, 280], '={{ !$json.skipped }}');
+
 // ---------------- Per-document loop ----------------
-add({ name: 'Loop Over Documents', type: 'n8n-nodes-base.splitInBatches', typeVersion: 3, position: [-40, 280], parameters: { batchSize: 1, options: {} } });
+add({ name: 'Loop Over Documents', type: 'n8n-nodes-base.splitInBatches', typeVersion: 3, position: [40, 280], parameters: { batchSize: 1, options: {} } });
 codeNode('Current Document', [200, 380], 'current-document.js', null);
 boolIf('Has PDF?', [420, 380], '={{ $json.hasPdf }}');
 add({
@@ -238,7 +240,9 @@ link('Get Projects', 'Get Suppliers');
 link('Get Suppliers', 'Get Employees');
 link('Get Employees', 'Get Purchase Orders');
 link('Get Purchase Orders', 'Normalize & Split Attachments');
-link('Normalize & Split Attachments', 'Loop Over Documents');
+link('Normalize & Split Attachments', 'Any Documents?');
+link('Any Documents?', 'Loop Over Documents', 0);
+link('Any Documents?', 'Build Run Report', 1);
 link('Loop Over Documents', 'Build Run Report', 0); // done
 link('Loop Over Documents', 'Current Document', 1); // loop
 link('Build Run Report', 'Respond to Webhook');

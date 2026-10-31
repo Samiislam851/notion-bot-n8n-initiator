@@ -86,3 +86,41 @@ test('supplier matching: sender email, field employee, unknown sender', () => {
   assert.equal(byId.s08.supplierName, 'Lusso Stone Imports');
   assert.equal(byId.s06.projectMethod, 'purchase order');
 });
+
+// Regressions found by the edge-case suite (test/output/test-run-report.md)
+test('regression e11: European number format is parsed, never silently truncated', () => {
+  assert.equal(L.parseAmount('EUR 1.234,64'), 1234.64);
+  assert.equal(L.parseAmount('222,64'), 222.64);
+  assert.equal(L.parseAmount('1,234'), 1234);
+  const f = L.extractFields({ documentText: 'Imponibile / Subtotal: EUR 1.012,00\nTotale / Total: EUR 1.234,64' }, cfg);
+  assert.equal(f.amount, 1234.64);
+  assert.equal(f.currency, 'EUR');
+});
+
+test('regression e22: credit note keeps its own number and is negative', () => {
+  assert.equal(L.parseAmount('-$450.00'), -450);
+  assert.equal(L.parseAmount('($1,200.50)'), -1200.5);
+  const f = L.extractFields({ documentText: 'CREDIT NOTE\nCredit Note No: CN-2290\nApplies to Invoice: AT-INV-55120\nTotal Credit: $450.00' }, cfg);
+  assert.equal(f.docRef, 'CN-2290');
+  assert.equal(f.amount, -450);
+});
+
+test('regression e12: "P.O. # 1044" is a purchase order', () => {
+  assert.equal(L.extractPO('P.O. # 1044'), 'PO-1044');
+  assert.equal(L.extractPO('Purchase Order: PO-1036'), 'PO-1036');
+});
+
+test('regression e20: "Store #1874" is not taken as the supplier name', () => {
+  const r = L.prepareSubmission({
+    email: { from: 'mike@kevinbuild.co', fromName: 'Mike Johnson', subject: 'Receipt MPL-001', text: "Grabbed studs from Lowe's for the deck.", date: '2026-10-29T20:10:00Z' },
+    attachment: { fileName: 'r.pdf', kind: 'pdf' },
+    documentText: "LOWE'S HOME IMPROVEMENT\nStore #1874 Charlotte, NC\nTOTAL $312.47\nPAID",
+  }, ref, cfg);
+  assert.equal(r.supplierName, "Lowe's");
+});
+
+test('regression e34: fallback date uses the company timezone, not UTC', () => {
+  const r = L.prepareSubmission({ email: { from: 'x@y.com', subject: 'Invoice X-1', text: 'Amount Due: $640.00', date: '2026-11-01T02:30:00Z' }, documentText: '' }, ref, { ...cfg, timezone: 'America/New_York' });
+  assert.equal(r.docDate, '2026-10-31');
+  assert.equal(r.docDateSource, 'email');
+});
