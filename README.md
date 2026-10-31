@@ -464,7 +464,7 @@ The response lists, for every document: the action taken, the extracted fields, 
 
 | Command | What it does |
 |---|---|
-| `npm test` | 30 unit tests of the logic (no network) |
+| `npm test` | 37 unit tests of the logic (no network) |
 | `npm run setup:notion` | Prepare Notion (section 5.5) |
 | `npm run build` | Generate `dist/cost-intake-workflow.json` |
 | `npm run deploy` | Build, create credentials, and import + activate in n8n |
@@ -487,8 +487,9 @@ The response lists, for every document: the action taken, the extracted fields, 
 
 | Layer | How | Result |
 |---|---|---|
-| **Unit** | `npm test` (node:test). Runs the **same code** that is inlined into the n8n Code nodes | **30/30 pass**: dates, amounts, currencies, status, subtotal vs total, flattened PDF text, project codes, supplier matching, create/duplicate/update, status never goes backwards, amount change flagged, totals, notification recipients |
+| **Unit** | `npm test` (node:test). Runs the **same code** that is inlined into the n8n Code nodes | **37/37 pass** (incl. 7 regression tests from the edge suite): dates, amounts, currencies, status, subtotal vs total, flattened PDF text, project codes, supplier matching, create/duplicate/update, status never goes backwards, amount change flagged, totals, notification recipients |
 | **End-to-end** | `npm run scenarios`. Real PDFs and a PNG are generated and sent to the live webhook; each result is checked | **11/11 pass** (report in `test/output/scenario-report.md`) |
+| **Edge cases** | `npm run scenarios -- --suite edge`. 33 adversarial cases designed and reviewed by separate agents (`test/output/edge-case-review.md`) | **33/33 pass** after fixing 7 bugs found in run 1 (`test/output/test-run-report.md`) |
 | **Data consistency** | `npm run verify`. Independent read-back from Notion | **Consistent**: 13 records, 13 unique dedupe keys; all 10 summary rows match the recomputed totals |
 
 | # | Scenario | Expected and observed |
